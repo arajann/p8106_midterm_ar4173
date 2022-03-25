@@ -1,0 +1,34 @@
+---
+title: "p8106_midterm"
+author: "Anand Rajan"
+date: "3/25/2022"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, cache=TRUE)
+```
+
+```{r}
+library(tidyverse)
+library(here)
+library(caret)
+```
+
+```{r}
+stroke_data <- read_csv("./p8106_midterm_ar4173/data/healthcare-dataset-stroke-data 2.csv") %>%
+  janitor::clean_names() %>%
+  mutate(
+    gender = as.factor(gender),
+    hypertension = as.factor(hypertension),
+    heart_disease = as.factor(heart_disease),
+    ever_married = as.factor(ifelse(ever_married == "Yes", 1, 0)),
+    work_type = as.factor(work_type),
+    residence_type = as.factor(residence_type),
+    bmi = as.double(bmi),
+    smoking_status = as.factor(smoking_status),
+    stroke = as.factor(stroke)
+  ) %>%
+  select(-id)
+```
+
