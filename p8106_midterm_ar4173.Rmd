@@ -11,12 +11,16 @@ knitr::opts_chunk$set(echo = TRUE, cache=TRUE)
 
 ```{r}
 library(tidyverse)
-library(here)
 library(caret)
+library(janitor)
+library(MASS)
+library(pROC)
 ```
+# Introduction
+With the data set, we are trying to answer questions on what factors influence the likelihood of stroke in patients. The data set contains variables on specific health information such as bmi, average glucose level, and heart disease status. Along with health information, the dataset contains information on social factors as well such as marriage status, residence type, and work type. From these variables we are not only going to look at what factors predict stroke, but whether the likelihood of strokes are different across various demographic/social factors. 
 
 ```{r}
-stroke_data <- read_csv("./p8106_midterm_ar4173/data/healthcare-dataset-stroke-data 2.csv") %>%
+stroke_data <- read_csv("data/healthcare-dataset-stroke-data.csv") %>%
   janitor::clean_names() %>%
   mutate(
     gender = as.factor(gender),
@@ -29,6 +33,226 @@ stroke_data <- read_csv("./p8106_midterm_ar4173/data/healthcare-dataset-stroke-d
     smoking_status = as.factor(smoking_status),
     stroke = as.factor(stroke)
   ) %>%
+  mutate(
+    stroke = factor(case_when(stroke == 0 ~ "No Stroke",
+                              stroke == 1 ~ "Stroke"))
+    ) %>% 
   select(-id)
+
+stroke_data <- drop_na(stroke_data)
+stroke_data
+
+```
+
+
+To clean the data, we converted all the categorical variables into factors, and converted BMI, a continuous variable, into a dbl. Then we removed the ID variable and any missing observations. 
+
+
+# Exploratory Analysis 
+
+## Exploring the different demographic variables 
+
+Let's compare stroke prevalence by gender
+
+```{r}
+stroke_data %>% 
+  group_by(gender) %>% 
+  count(stroke) %>% 
+  pivot_wider(
+    names_from = gender,
+    values_from = n 
+  ) %>% 
+  mutate(
+    stroke = factor(case_when(stroke == 0 ~ "No Stroke",
+                              stroke == 1 ~ "Stroke"))
+  ) %>% 
+  adorn_totals("row") %>% 
+  knitr::kable()
+```
+ From the table, we see there isn't a major difference between stroke prevalence across gender. The calculated OR is 1.07. Furthermore we see there are significantly more females than males in the population.
+ 
+ Let's look at work type
+ 
+ 
+```{r}
+stroke_data %>% 
+  group_by(work_type) %>% 
+  count(stroke) %>% 
+  pivot_wider(
+    names_from = work_type,
+    values_from = n 
+  ) %>% 
+  mutate(
+    stroke = factor(case_when(stroke == 0 ~ "No Stroke",
+                              stroke == 1 ~ "Stroke"))
+  ) %>% 
+  adorn_totals("row") %>% 
+  knitr::kable()
+
+```
+ From evaluating the table, we do not see any major differences in stroke prevalence across work types. However, we do see a majority of patients in the data set are privately employed.
+ 
+```{r}
+stroke_data %>% 
+  group_by(residence_type) %>% 
+  count(stroke) %>% 
+  pivot_wider(
+    names_from = residence_type,
+    values_from = n 
+  ) %>% 
+  mutate(
+    stroke = factor(case_when(stroke == 0 ~ "No Stroke",
+                              stroke == 1 ~ "Stroke"))
+  ) %>% 
+  adorn_totals("row") %>% 
+  knitr::kable()
+```
+ 
+ 
+ 
+Now let's look at more health-related factors
+ 
+```{r}
+stroke_data %>% 
+  group_by(smoking_status) %>%
+  count(stroke) %>% 
+  pivot_wider(
+    names_from = smoking_status,
+    values_from = n 
+  ) %>% 
+  mutate(
+    stroke = factor(case_when(stroke == 0 ~ "No Stroke",
+                              stroke == 1 ~ "Stroke")),
+  ) %>% 
+  adorn_totals("row") %>%
+  knitr::kable()
+```
+From looking at the table, we do not see major differences in prevalence rate of stroke across smoking status categories. However I want to run additional statistical testing(Chi-squared test) to see if there is a difference across smoking status groups
+
+
+```{r}
+stroke_smoking_df <- stroke_data %>% 
+            filter(smoking_status != "Unknown")
+
+
+chisq.test(stroke_smoking_df$stroke,stroke_smoking_df$smoking_status)
+```
+We removed observations where their smoking status was unknown and ran a chi-squared test comparing frequency of stroke across smoking status categories. Based on an alpha-level = 0.05, we would REJECT the null hypothesis and conclude there is a difference in frequency of stroke across smoking status. However, it should be of note that p-value = 0.04996, which is very close to 0.05, thus we should consider the possibility of type I error. 
+
+
+Now let's look at hypertension
+
+```{r}
+stroke_data %>% 
+  group_by(hypertension) %>%
+  count(stroke) %>% 
+  mutate(
+    stroke = factor(case_when(stroke == 0 ~ "No Stroke",
+                              stroke == 1 ~ "Stroke")),
+    hypertension = factor(case_when(hypertension == 0 ~ "No Hypertension",
+                                    hypertension == 1 ~ "Hypertension"))
+  ) %>% 
+  pivot_wider(
+    names_from = hypertension,
+    values_from=n
+  ) %>% 
+  adorn_totals("row") %>%
+  knitr::kable()
+```
+
+From looking at the 2x2 table we see that there is a significant difference in odds of stroke based on presence of hypertension. We will further explore this via chi-squared test
+
+```{r}
+chisq.test(stroke_data$hypertension, stroke_data$stroke)
+```
+ Based on an alpha-level=0.05, we would REJECT the null hypothesis and conclude there is a difference in stroke prevalence across hypertension status. 
+ 
+ Let's look at heart disease status now.
+ 
+```{r}
+stroke_data %>% 
+  group_by(heart_disease) %>%
+  count(stroke) %>% 
+  mutate(
+    stroke = factor(case_when(stroke == 0 ~ "No Stroke",
+                              stroke == 1 ~ "Stroke")),
+    heart_disease = factor(case_when(heart_disease == 0 ~ "No Heart Disease",
+                                    heart_disease == 1 ~ "Heart Disease"))
+  ) %>% 
+  pivot_wider(
+    names_from = stroke,
+    values_from=n
+  ) %>% 
+  adorn_totals("row") %>%
+  knitr::kable()
+```
+ From the table we see that there is difference of stroke prevalence across heart disease status. We will conduct chi-squared tests to further evaluate.
+ 
+ 
+```{r}
+chisq.test(stroke_data$heart_disease, stroke_data$stroke)
+```
+ Based on the alpha-level of 0.05, we would reject the null hypothesis and conclude there is a significant difference in stroke prevalence across stroke categories. 
+
+```{r}
+ggplot(stroke_data, aes(x=age, y=bmi)) +
+  geom_point(aes(color=stroke)) +
+  geom_smooth(se=FALSE)
+```
+
+```{r}
+ggplot(stroke_data, aes(x=bmi, y=avg_glucose_level)) +
+  geom_point(aes(color=stroke)) +
+  geom_smooth(se=FALSE)
+```
+
+
+
+```{r}
+stroke_x <- model.matrix(gender ~ .,stroke_data)[.,-1]
+stroke_y <- stroke_data$stroke
+
+featurePlot(x = stroke_x, y = stroke_y,
+            scales = list(x = list(relation = "free"),
+                          y = list(relation = "free")),
+            plot= "density",
+            labels = c("", "stroke"),
+            pch = "|",
+            auto.key = list(columns = 2))
+
+```
+So what did we learn from running the exploratory analysis. From looking at the various demographic social characteristics variables, we did not see much difference in stroke prevalence across categories such as type of work, gender, and type of residence. 
+
+# Model Building
+
+Partition Data into Train and Test data
+
+```{r}
+part_index <- createDataPartition(y = stroke_data$stroke,
+                                  p = 0.7,
+                                  list = FALSE)
+
+stroke_trn <- stroke_data[part_index, ]
+stroke_tst <- stroke_data[-part_index, ]
+
+stroke_x <- model.matrix(gender ~ .,stroke_data)[,-1]
+stroke_y <- stroke_data$stroke
+
+```
+
+
+```{r}
+set.seed(10)
+ctrl1 <- trainControl(method = "repeatedcv",
+                      repeats = 5,
+                      summaryFunction = twoClassSummary,
+                      classProbs = TRUE)
+stroke_glm <- train(x = stroke_x,
+                    y = stroke_y,
+                    method = "glm",
+                    metric = "ROC",
+                   trControl = ctrl1)
+
+summary(auto_glm)
 ```
 
