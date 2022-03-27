@@ -15,6 +15,9 @@ library(caret)
 library(janitor)
 library(MASS)
 library(pROC)
+library(dplyr)
+library(vip)
+
 ```
 # Introduction
 With the data set, we are trying to answer questions on what factors influence the likelihood of stroke in patients. The data set contains variables on specific health information such as bmi, average glucose level, and heart disease status. Along with health information, the dataset contains information on social factors as well such as marriage status, residence type, and work type. From these variables we are not only going to look at what factors predict stroke, but whether the likelihood of strokes are different across various demographic/social factors. 
@@ -33,14 +36,12 @@ stroke_data <- read_csv("data/healthcare-dataset-stroke-data.csv") %>%
     smoking_status = as.factor(smoking_status),
     stroke = as.factor(stroke)
   ) %>%
-  mutate(
-    stroke = factor(case_when(stroke == 0 ~ "No Stroke",
-                              stroke == 1 ~ "Stroke"))
-    ) %>% 
-  select(-id)
+  dplyr::select(-id)
+
 
 stroke_data <- drop_na(stroke_data)
 stroke_data
+
 
 ```
 
@@ -52,6 +53,7 @@ To clean the data, we converted all the categorical variables into factors, and 
 
 ## Exploring the different demographic variables 
 
+
 Let's compare stroke prevalence by gender
 
 ```{r}
@@ -61,10 +63,6 @@ stroke_data %>%
   pivot_wider(
     names_from = gender,
     values_from = n 
-  ) %>% 
-  mutate(
-    stroke = factor(case_when(stroke == 0 ~ "No Stroke",
-                              stroke == 1 ~ "Stroke"))
   ) %>% 
   adorn_totals("row") %>% 
   knitr::kable()
@@ -82,10 +80,6 @@ stroke_data %>%
     names_from = work_type,
     values_from = n 
   ) %>% 
-  mutate(
-    stroke = factor(case_when(stroke == 0 ~ "No Stroke",
-                              stroke == 1 ~ "Stroke"))
-  ) %>% 
   adorn_totals("row") %>% 
   knitr::kable()
 
@@ -100,12 +94,10 @@ stroke_data %>%
     names_from = residence_type,
     values_from = n 
   ) %>% 
-  mutate(
-    stroke = factor(case_when(stroke == 0 ~ "No Stroke",
-                              stroke == 1 ~ "Stroke"))
-  ) %>% 
   adorn_totals("row") %>% 
   knitr::kable()
+
+chisq.test(stroke_data$residence_type, stroke_data$stroke)
 ```
  
  
@@ -119,10 +111,6 @@ stroke_data %>%
   pivot_wider(
     names_from = smoking_status,
     values_from = n 
-  ) %>% 
-  mutate(
-    stroke = factor(case_when(stroke == 0 ~ "No Stroke",
-                              stroke == 1 ~ "Stroke")),
   ) %>% 
   adorn_totals("row") %>%
   knitr::kable()
@@ -147,8 +135,6 @@ stroke_data %>%
   group_by(hypertension) %>%
   count(stroke) %>% 
   mutate(
-    stroke = factor(case_when(stroke == 0 ~ "No Stroke",
-                              stroke == 1 ~ "Stroke")),
     hypertension = factor(case_when(hypertension == 0 ~ "No Hypertension",
                                     hypertension == 1 ~ "Hypertension"))
   ) %>% 
@@ -209,10 +195,10 @@ ggplot(stroke_data, aes(x=bmi, y=avg_glucose_level)) +
 
 
 ```{r}
-stroke_x <- model.matrix(gender ~ .,stroke_data)[.,-1]
-stroke_y <- stroke_data$stroke
+x <- model.matrix(stroke ~ .,stroke_data)[,-1]
+y <- stroke_data$stroke
 
-featurePlot(x = stroke_x, y = stroke_y,
+featurePlot(x = x, y = y,
             scales = list(x = list(relation = "free"),
                           y = list(relation = "free")),
             plot= "density",
@@ -225,19 +211,50 @@ So what did we learn from running the exploratory analysis. From looking at the 
 
 # Model Building
 
-Partition Data into Train and Test data
+Now that we have done exploratory analysis, we will do model building.
+
+
+Before we begin model building we will partition Data into Train and Test data. 
 
 ```{r}
-part_index <- createDataPartition(y = stroke_data$stroke,
+stroke_df <- stroke_data %>% 
+  mutate(
+    stroke=factor(case_when(stroke == 0 ~ "no_stroke",
+                            stroke == 1 ~ "stroke")),
+    gender=factor(case_when(gender == "Female" ~ 0,
+                            gender == "Male" ~ 1)),
+    residence_type = factor(case_when(residence_type == "Rural" ~ 0,
+                                      residence_type == "Urban" ~ 1)),
+    smoking_status= factor(case_when(smoking_status == "never smoked" ~ 0,
+                                     smoking_status == "formerly smoked" ~ 1,
+                                     smoking_status == "smokes" ~ 2,
+                                     smoking_status == "Unknown" ~ 3))) %>% 
+  mutate(
+    stroke = factor(stroke,levels = c("no_stroke", "stroke"))
+  ) %>% 
+  filter(gender != "Other") %>% 
+  dplyr::select(-work_type)
+
+part_index <- createDataPartition(y = stroke_df$stroke,
                                   p = 0.7,
                                   list = FALSE)
 
-stroke_trn <- stroke_data[part_index, ]
-stroke_tst <- stroke_data[-part_index, ]
+stroke_trn <- stroke_df[part_index, ]
+stroke_tst <- stroke_df[-part_index, ]
 
-stroke_x <- model.matrix(gender ~ .,stroke_data)[,-1]
-stroke_y <- stroke_data$stroke
+stroke_x <- stroke_trn[1:9]
+stroke_y <- stroke_trn$stroke
 
+```
+
+```{r}
+    ever_married = factor(case_when(ever_married == 0 ~ "No",
+                                    ever_married == 1 ~ "Yes")),
+    hypertension = factor(case_when(hypertension == 0 ~ "No",
+                                   hypertension == 1 ~ "Yes")),
+    heart_disease = factor(case_when(heart_disease == 0 ~ "No",
+                                     heart_disease == 1 ~ "Yes"))
+    
 ```
 
 
@@ -247,12 +264,116 @@ ctrl1 <- trainControl(method = "repeatedcv",
                       repeats = 5,
                       summaryFunction = twoClassSummary,
                       classProbs = TRUE)
+
 stroke_glm <- train(x = stroke_x,
                     y = stroke_y,
                     method = "glm",
                     metric = "ROC",
                    trControl = ctrl1)
 
-summary(auto_glm)
+summary(stroke_glm)
+```
+From looking at this model we see the significant predicates( at alpha level = 0.05), are age, hypertension, and average glucose level. 
+
+Now we will look at the performance of the model on the test data set. 
+```{r}
+tst_x <- stroke_tst[1:9]
+tst_y <- stroke_tst$stroke
+
+
+glm_pred <- predict(stroke_glm, newdata = tst_x)
+conf_matrix <- confusionMatrix(data = as.factor(glm_pred),
+                               reference = tst_y,
+                               positive = "stroke")
+                               
+conf_matrix
+```
+
+From looking at the confusion matrix we see that the accuracy of the model is quite high at 95.79%. Thus the misclassification rate is 4.21%, which is quite low. Moreover the specificity is quite high at 99.92%, which means the likelihood of having a true negative from the model is 0.9992. However, the major issues with model stem from the extremely low sensitivity rate. The likelihood of the model having a true positive is 0.016. Now this low rate could be due to a multitude of issue. For one, a quick glance at the test data set shows tht the number of patients with stroke is significantly lower than the number of patients that had no stroke. We will conduct further testing by plotting the ROC curve
+
+```{r}
+glm_pred_prob <- predict(stroke_glm,
+                    newdata = tst_x,
+                    type = "prob")[,2]
+roc_glm <- roc(tst_y, glm_pred_prob)
+
+plot(roc_glm, col = "goldenrod3", legacy.axes = TRUE)
+
+
+roc_glm$auc
+```
+
+The AUC of the model is equal to 0.8269. This value is actually quite good. To further understand which predictors could be significant, we will compare this model to other logistic regressions.
+
+
+```{r}
+set.seed(10)
+stroke_gam <- train(x = stroke_x,
+                  y = stroke_y,
+                  method = "gam",
+                  metric = "ROC",
+                  trControl = ctrl1)
+
+stroke_gam$finalModel
+
+plot(stroke_gam$finalModel, select = 3)
+```
+
+
+```{r}
+set.seed(10)
+stroke_mars <- train(x = stroke_x,
+                   y = stroke_y,
+                   method = "earth",
+                   tuneGrid = expand.grid(degree = 1:4,
+                                          nprune = 2:15),
+                   metric = "ROC",
+                   trControl = ctrl1)
+
+summary(stroke_mars)
+plot(stroke_mars)
+```
+
+
+```{r}
+stroke_mars$bestTune
+coef(stroke_mars$finalModel)
+```
+
+```{r}
+vip(stroke_mars$finalModel)
+```
+
+```{r}
+set.seed(10)
+stroke_lda <- lda(stroke ~ ., data = stroke_trn)
+stroke_lda$scaling
+
+plot(stroke_lda)
+```
+
+
+
+```{r}
+set.seed(10)
+stroke_lda <- train(x = stroke_x,
+                    y = stroke_y,
+                    method = "lda",
+                    metric = "ROC",
+                   trControl = ctrl1)
+```
+
+
+
+```{r}
+res <- resamples(list(logistic = stroke_glm,
+                      GAM = stroke_gam,
+                      MARS = stroke_mars))
+summary(res)
+
+```
+
+```{r}
+bwplot(res, metric="ROC")
 ```
 
